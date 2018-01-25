@@ -7,6 +7,7 @@ using Reduce, SpecialFunctions, Base.Cartesian, Sobol
 include("sobol.jl")
 include("polynomial/polynomials.jl")
 include("polynomial/solution_matrix.jl")
+include("high_degree_polynomial/polynomials.jl")
 
 export  sobol_vec,
         max_degree_poly,
