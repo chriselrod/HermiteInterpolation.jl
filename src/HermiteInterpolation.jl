@@ -2,7 +2,12 @@ __precompile__()
 
 module HermiteInterpolation
 
-using Reduce, SpecialFunctions, Base.Cartesian, Sobol
+using   Reduce,
+        SpecialFunctions,
+        Base.Cartesian,
+        Sobol,
+        GPUArrays,
+        Compat
 
 include("sobol.jl")
 include("polynomial/polynomials.jl")
