@@ -356,6 +356,17 @@ base_poly is DxP
 @generated function generate_basis_kernel(state, root_inds::GPUArray{Tuple{Cuint,Cuint}} roots::GPUArray, basis_poly::GPUArray{Float32,4}, base_poly::GPUArray, ωᵣ::NTuple{L,T}, ωᵢ::NTuple{L,T}, ::EvaluationKernel{D,P,N}) where {D,P,N, L, T}
     complete_cycles = N ÷ P
     L, Deven = divrem(D-1, 2)
+    D_two_factor = Deven
+    if Deven == 1
+        for i ∈ 1:trunc(Int,log2(8))
+            if D >> D_two_factor <<  D_two_factor != D
+                D_two_factor -= 1
+                break
+            else
+                D_two_factor += 1
+            end
+        end
+    end
     quote
         n = @linearidx rootinds
         @nextract $P p i -> root_inds[Cuint(i),n] #We skip first two p_inds are factored out.
