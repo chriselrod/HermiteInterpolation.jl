@@ -348,17 +348,14 @@ end
         ComplexViewPolynomial($ω, p)
     end
 end
-"""
-roots are PxN
-basis_poly is Dx2PxN
-base_poly is DxP
-"""
-@generated function generate_basis_kernel(state, root_inds::GPUArray{Tuple{Cuint,Cuint}} roots::GPUArray, basis_poly::GPUArray{Float32,4}, base_poly::GPUArray, ωᵣ::NTuple{L,T}, ωᵢ::NTuple{L,T}, ::EvaluationKernel{D,P,N}) where {D,P,N, L, T}
+
+
+function meta_info_gbk(N, P, D)
     complete_cycles = N ÷ P
     L, Deven = divrem(D-1, 2)
     D_two_factor = Deven
     if Deven == 1
-        for i ∈ 1:trunc(Int,log2(8))
+        for i ∈ 1:trunc(Int,log2(D))
             if D >> D_two_factor <<  D_two_factor != D
                 D_two_factor -= 1
                 break
@@ -367,6 +364,16 @@ base_poly is DxP
             end
         end
     end
+    complete_cycles, L, Deven, D_two_factor
+end
+
+"""
+roots are PxN
+basis_poly is Dx2PxN
+base_poly is DxP
+"""
+@generated function generate_basis_kernel(state, root_inds::GPUArray{Tuple{Cuint,Cuint}} roots::GPUArray, basis_poly::GPUArray{Float32,4}, base_poly::GPUArray, ωᵣ::NTuple{L,T}, ωᵢ::NTuple{L,T}, ::EvaluationKernel{D,P,N}) where {D,P,N, L, T}
+    complete_cycles, L, Deven, D_two_factor = meta_info_gbk(N, P, D)
     quote
         n = @linearidx rootinds
         @nextract $P p i -> root_inds[Cuint(i),n] #We skip first two p_inds are factored out.
@@ -462,17 +469,5 @@ L = (D-1) ÷ 2
         base_poly[pᵢ, d] = cᵢ
         nothing
     end
-end
-
-
-function MatrixFFT(n::Int, ::Type{T} = Float64) where T
-    out = fill(one(Complex{T}), n, n)
-    for j ∈ 2:n
-        out[j, 2] = exp( -2π*im*(j-1) / n )
-    end
-    for i ∈ 3:n, j ∈ i:n
-        out[j,i] = out[j,i-1] * out[j,2]
-    end
-    Symmetric(out, :L) #./= √n
 end
 
