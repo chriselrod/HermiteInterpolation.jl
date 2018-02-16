@@ -253,6 +253,12 @@ end
         out
     end
 end
+function tupGridd(x::NTuple{N,T}) where {N,T}
+    ntuple( i -> begin
+        x[i] > 0 ? :( $(Symbol('a' + i - 1, "_", x[i])) - $(Symbol('a' + i - 1, "_", x[i]-1)) ) : Symbol('a' + i - 1, "_", x[i])
+     end, Val{N}())
+end
+
 @generated function lnorm_poly(::Val{N}, d::Int, l=0.5, T = Int) where N
     quote
         j_0 = d
