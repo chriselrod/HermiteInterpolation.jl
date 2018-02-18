@@ -9,6 +9,12 @@ using   Reduce,
         GPUArrays,
         Compat
 
+import HermiteQuadratureRules:
+        hermite_nodes,
+        hermite_nodes_diffs,
+        hermite_nodes_posi_diffs
+
+
 include("sobol.jl")
 include("dfttools.jl")
 include("polynomial/polynomials.jl")
