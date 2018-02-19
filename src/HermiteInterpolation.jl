@@ -12,11 +12,13 @@ using   Reduce,
 import HermiteQuadratureRules:
         hermite_nodes,
         hermite_nodes_diffs,
-        hermite_nodes_posi_diffs
+        hermite_nodes_posi_diffs,
+        hermite_weights
 
 
 include("sobol.jl")
 include("dfttools.jl")
+include("sparse_grids/sparse_grids.jl")
 include("polynomial/polynomials.jl")
 include("polynomial/solution_matrix.jl")
 include("high_degree_polynomial/polynomials.jl")
