@@ -12,10 +12,10 @@ struct SparseGrid{T,N,L} <: AbstractArray{T,A<:AbstractArray{T},N,L}
 end
 
 @generated function SparseGrid(::Type{T}, ::Val{N}, ::Val{L}) where {T <: Real, N, L}
-    SparseGrid{T,N,L}(sparse_grid_mat(T, Val{N}(), l))
+    SparseGrid{T,N,L}(sparse_grid_mat(T, Val{N}(), L))
 end
 @generated function SparseGrid(::Type{A}, ::Val{N}, ::Val{L}) where {T, A <: AbstractArray{T}, N, L}
-    SparseGrid{T,N,L}(A(sparse_grid_mat(T, Val{N}(), l)))
+    SparseGrid{T,N,L}(A(sparse_grid_mat(T, Val{N}(), L)))
 end
 @generated function sized_setdiff(x::NTuple{Nold,I}, y::NTuple{Nnew,I}) where {Nold,Nnew,I<:Integer}
     Ndiff = Nold - Nnew
@@ -65,7 +65,7 @@ end
     end
 end
 
-sparse_grid_mat(::Type{T}, ::Val{N}, l::Int) = sparse_grid_mat!(Matrix{T}($N, polycount(Val{N}(), l)), Val{N}(), l)
+sparse_grid_mat(::Type{T}, ::Val{N}, l::Int) where {T,N} = sparse_grid_mat!(Matrix{T}($N, polycount(Val{N}(), l)), Val{N}(), l)
 
 @generated function sparse_grid_mat!(out::Matrix{T}, ::Val{N}, l::Int) where {T,N}
     quote
@@ -189,12 +189,68 @@ end
 #@generated function _marginalize(sg::SparseGrid{T,No,L}, marg::NTuple{Nin}, margout::NTuple{Nout}) where {T,No,L, Nin, Nout}
 #end
 @generated function marginalize(sg::SparseGrid{T,No,L}, ::Marginal{marg}, ::Marginalize{margout}) where {T,No,L, marg, margout}
-    _marginalize(sg::SparseGrid{T,No,L}, Marginal{marg}(), Marginalize{margout}())
+    _marginalize(sg::SparseGrid{T,No,L}, marg, margout)
 end
 
 ## Need to replace Marginal{marg} and Marginalize{margout} with marg::NTuple and margout::NTuple
 ## add out and in_interp
-@generated function _marginalize(sg::SparseGrid{T,No,L}, ::Marginal{marg}, ::Marginalize{margout}) where {T,No,L, marg, margout}
+@generated function _marginalize(sg::SparseGrid{T,No,L}, marg::NTuple{Nin,Int}, margout::NTuple{Nout}) where {T,No,L,Nin,Nout}
+    tupj_marg = Expr(:tuple, symbolify(marg)... ) #For sub2ind-ing
+    tupj_margout = Expr(:tuple, symbolify(margout)... ) #For marginalizing out
+    tupj_margout_course = Expr(:tuple, symbolify(margout, :i_)...)
+    calc_l = :(sum($tupj_margout_course) - $(length(margout)))
+    quote
+        ex = quote @fastmath begin end end
+        exa = ex.args[2].args[2].args
+
+
+        j_0 = $L
+        l_0 = 1
+        s_0 = 0
+        ind = 0
+        @nloops $No i p -> begin
+            l_{$N-p}:j_{$N-p}
+        end p -> begin
+            s_{$N-p+1} = s_{$N-p} + i_p - 1
+            j_{$N-p+1} = $L - s_{$N-p+1}
+            l_{$N-p+1} = max(1, (3-p)*$L - s_{$N-p+1} )
+        end begin
+            @nloops $N j p -> begin
+#                max_l = p == $N ? length(hermite_nodes[i_p]) : length(hermite_nodes_diffs[i_p])
+#                1:max_l
+
+                max_l = length(hermite_nodes[i_p])
+                if $No == 1
+                    min_l = i_1 == 1 ? 1 : length(hermite_nodes[i_p-1])+1
+                elseif p == $N
+                    min_l = 1
+                elseif i_p == 1
+                    min_l = 1
+                else
+                    min_l = length(hermite_nodes[i_p-1])+1
+                end
+                min_l:max_l
+            end begin
+                ind += 1
+           #     @nexprs $N k -> begin
+                l = $L + $No - sum( ( @ntuple $No i ) ) 
+
+                marg_ind = sg_sub2ind( Val{L}(), $tupj_marg )
+                weight_val = calc_weight( Val{L}(), l, $tupj_margout, $tupj_margout_course)
+                expr = :( out[$marg_ind] = in_interp[1,$ind] * $weight_val )
+                push!(exa, expr)
+
+            end
+        end
+        ex
+
+
+    end
+end
+
+## Need to replace Marginal{marg} and Marginalize{margout} with marg::NTuple and margout::NTuple
+## add out and in_interp
+@generated function _marginalize_deriv(sg::SparseGrid{T,No,L}, ::Marginal{marg}, ::Marginalize{margout}) where {T,No,L, marg, margout}
     Nin = length(marg) #@ntuple $Nin p -> j_{ $marg[p] }
     Nout = length(margout)
     tupj_marg = Expr(:tuple, symbolify(marg)... ) #For sub2ind-ing
@@ -235,7 +291,6 @@ end
             end begin
                 ind += 1
            #     @nexprs $N k -> begin
-
                 l = $L + $No - sum( ( @ntuple $No i ) ) 
 
                 marg_ind = sg_sub2ind( Val{L}(), $tupj_marg )
