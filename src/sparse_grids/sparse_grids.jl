@@ -108,6 +108,7 @@ function set_symbol_to_zero(course_inds::NTuple{N}, fine_inds::NTuple{N}, ::Type
 end
 
 
+
 ## Need to replace Marginal{marg} and Marginalize{margout} with marg::NTuple and margout::NTuple
 ## add out and in_interp
 # @generated function _marginalize(sg::SparseGrid{T,N,L}, marg::NTuple{Nin,Int}, margout::NTuple{Nout}) where {T,N,L,Nin,Nout}
@@ -167,9 +168,7 @@ end
                 weight_val = calc_weight( l_remaining, $tupj_margout_course, $tupj_margout )
                 expr = :( $marg_symbol += in_interp[$ind] * $weight_val )
                 push!(exa, expr)
-
             end
-
         end
 
         push!(exa, :(marginal_interp = Vector{T}(undef, $marg_length)))        
