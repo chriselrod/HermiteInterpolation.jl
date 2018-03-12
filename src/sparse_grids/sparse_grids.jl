@@ -5,9 +5,7 @@ Base.@pure Marginalize(marg...) = Marginalize{marg}()
 struct Marginal{T} end
 Base.@pure Marginal(marg...) = Marginal{marg}()
 
-struct SparseGrid{T,N,L} <: AbstractArray{T,A<:AbstractArray{T},N,L}
-
-    
+struct SparseGrid{T,N,L,A} <: AbstractArray{T,N}
     nodes::A
 end
 
@@ -16,17 +14,6 @@ end
 end
 @generated function SparseGrid(::Type{A}, ::Val{N}, ::Val{L}) where {T, A <: AbstractArray{T}, N, L}
     SparseGrid{T,N,L}(A(sparse_grid_mat(T, Val{N}(), L)))
-end
-@generated function sized_setdiff(x::NTuple{Nold,I}, y::NTuple{Nnew,I}) where {Nold,Nnew,I<:Integer}
-    Ndiff = Nold - Nnew
-    quote
-        @nextract $Nold o x
-        @nextract $Nnew n y
-
-        @nexprs $Ndiff i -> begin
-            d_i = 1
-        end
-    end
 end
 
 @generated function SparseGrid(sg::SparseGrid{T,Nold,L}, ::Marginal{marg}) where {T,Nold,L,marg}
@@ -94,96 +81,11 @@ sparse_grid_mat(::Type{T}, ::Val{N}, l::Int) where {T,N} = sparse_grid_mat!(Matr
     end
 end
 
-#Ridiculously ad hoc.
-#It is possible to skip a LOT of these iterations.
-#Likely also to not have to iterate at all.
-#This is absolutely terrible.
-@generated function sg_sub2ind(sg::SparseGrid{T,N,L}, ind::NTuple{N,I}) where {N,T,L,I <: Integer}
-    Np1 = N+1
-    quote
-        j_0 = $L
-        l_0 = 1
-        s_0 = 0
-        out = 0
-        @nloops $N i p -> begin
-            l_{$N-p}:j_{$N-p}
-        end p -> begin
-            s_{$N-p+1} = s_{$N-p} + i_p - 1
-            j_{$N-p+1} = $L - s_{$N-p+1}
-            l_{$N-p+1} = max(1, (3-p)*$L - s_{$N-p+1} )
-        end begin
-            @nloops $N k p -> begin
-                max_l = length(hermite_nodes[i_p])
-                if $No == 1
-                    min_l = i_1 == 1 ? 1 : length(hermite_nodes[i_p-1])+1
-                elseif p == $N
-                    min_l = 1
-                elseif i_p == 1
-                    min_l = 1
-                else
-                    min_l = length(hermite_nodes[i_p-1])+1
-                end
-                min_l:max_l
-            end begin
-                out += 1
-                @nif $Np1 d -> k_d != ind[d] d -> () d -> return out
-            end
-        end
-        out
-    end
-end
-
-@generated function sg_sub2ind(::Val{L}, ind::NTuple{N, I}) where {L,N,I<:Integer}
-    Np1 = N+1
-    quote
-        j_0 = $L
-        l_0 = 1
-        s_0 = 0
-        out = 0
-        @nloops $N i p -> begin
-            l_{$N-p}:j_{$N-p}
-        end p -> begin
-            s_{$N-p+1} = s_{$N-p} + i_p - 1
-            j_{$N-p+1} = $L - s_{$N-p+1}
-            l_{$N-p+1} = max(1, (3-p)*$L - s_{$N-p+1} )
-        end begin
-            @nloops $N k p -> begin
-                max_l = length(hermite_nodes[i_p])
-                if $No == 1
-                    min_l = i_1 == 1 ? 1 : length(hermite_nodes[i_p-1])+1
-                elseif p == $N
-                    min_l = 1
-                elseif i_p == 1
-                    min_l = 1
-                else
-                    min_l = length(hermite_nodes[i_p-1])+1
-                end
-                min_l:max_l
-            end begin
-                out += 1
-                @nif $Np1 d -> k_d != ind[d] d -> () d -> return out
-            end
-        end
-        throw("Out of bounds.")
-    end
-end
-
 function gen_sub(marg::NTuple{N,I}) where {N,I<:Integer}
-    ntuple(i -> Symbol() Val{N}())
+    ntuple(i -> Symbol(), Val{N}())
 end
 function symbolify(x::NTuple{N,T}, sym::Symbol = :j_) where {N,T}
     ntuple( p -> Symbol(sym, x[p]) , Val{N}())
-end
-@generated function tm(::Marginal{marg}) where marg
-    Nin = length(marg) #@ntuple $Nin p -> j_{ $marg[p] }
-    tnin = 2Nin
-    tupj = Expr(:tuple, symbolify(marg)... )
-    quote
-        @nexprs $tnin p -> begin
-            j_p = 4p
-        end
-        $tupj
-    end
 end
 
 #@generated function _marginalize(sg::SparseGrid{T,No,L}, marg::NTuple{Nin}, margout::NTuple{Nout}) where {T,No,L, Nin, Nout}
@@ -192,59 +94,102 @@ end
     _marginalize(sg::SparseGrid{T,No,L}, marg, margout)
 end
 
+function marginal_symbol(course_inds::NTuple{N}, fine_inds::NTuple{N}, symbolstring = "m") where N
+    for (i,j) in zip(course_inds, fine_inds)
+        symbolstring *= "_" * string(i) * "_" * string(j)
+    end
+    Symbol(symbolstring)
+end
+
+function set_symbol_to_zero(course_inds::NTuple{N}, fine_inds::NTuple{N}, ::Type{T} = Float64, symbolstring = "m") where {N,T}
+    symbol = marginal_symbol(course_inds, fine_inds, symbolstring)
+    zero = zero(T)
+    :($symbol = $zero)
+end
+
+
 ## Need to replace Marginal{marg} and Marginalize{margout} with marg::NTuple and margout::NTuple
 ## add out and in_interp
-@generated function _marginalize(sg::SparseGrid{T,No,L}, marg::NTuple{Nin,Int}, margout::NTuple{Nout}) where {T,No,L,Nin,Nout}
-    tupj_marg = Expr(:tuple, symbolify(marg)... ) #For sub2ind-ing
-    tupj_margout = Expr(:tuple, symbolify(margout)... ) #For marginalizing out
-    tupj_margout_course = Expr(:tuple, symbolify(margout, :i_)...)
-    calc_l = :(sum($tupj_margout_course) - $(length(margout)))
+# @generated function _marginalize(sg::SparseGrid{T,N,L}, marg::NTuple{Nin,Int}, margout::NTuple{Nout}) where {T,N,L,Nin,Nout}
+@generated function _marginalize(sg::SparseGrid{T,N,L}, ::Marginal{marg}, ::Marginalize{margout}) where {T,N,L,marg,margout}
+    Nin = length(marg)
+    Nout = length(margout)
+    # calc_l = :(sum($tupj_margout_course) - $(length(margout)))
+    tupj_marg = Expr(:tuple, symbolify(marg, :j_)... ) #This tuple is for the fine indices we keep.
+    tupj_margout = Expr(:tuple, symbolify(margout, :j_)... ) #This tuple gives the fine indices we're marginalizing out.
+    tupj_marg_course = Expr(:tuple, symbolify(marg, :i_)... ) #This tuple gives the course indices we keep.
+    tupj_margout_course = Expr(:tuple, symbolify(margout, :i_)...) #This tuple gives the course indices we're marginalizing out.
     quote
         ex = quote @fastmath begin end end
-        exa = ex.args[2].args[2].args
+        exa = ex.args[2].args[3].args# 0.7
+        # exa = ex.args[2].args[2].args# 0.6
 
-
-        j_0 = $L
-        l_0 = 1
+        ilim_0 = $L
         s_0 = 0
-        ind = 0
-        @nloops $No i p -> begin
-            l_{$N-p}:j_{$N-p}
-        end p -> begin
-            s_{$N-p+1} = s_{$N-p} + i_p - 1
-            j_{$N-p+1} = $L - s_{$N-p+1}
-            l_{$N-p+1} = max(1, (3-p)*$L - s_{$N-p+1} )
-        end begin
-            @nloops $N j p -> begin
-#                max_l = p == $N ? length(hermite_nodes[i_p]) : length(hermite_nodes_diffs[i_p])
-#                1:max_l
 
-                max_l = length(hermite_nodes[i_p])
-                if $No == 1
-                    min_l = i_1 == 1 ? 1 : length(hermite_nodes[i_p-1])+1
-                elseif p == $N
-                    min_l = 1
-                elseif i_p == 1
-                    min_l = 1
-                else
-                    min_l = length(hermite_nodes[i_p-1])+1
-                end
-                min_l:max_l
+        marg_length = 0
+        #Here we set all the marginal values to zero, so that later we can "+=" them without worry.
+        @nloops $Nin i p -> begin
+            0:ilim_{$Nin-p}
+        end p -> begin
+            s_{$Nin-p+1} = s_{$Nin-p} + i_p
+            ilim_{$Nin-p+1} = $L - s_{$Nin-p+1}
+        end begin
+            @nloops $Nin j p -> begin
+                1:rule_lengths[i_p+1]
+            end begin
+                marg_length += 1
+                push!(exa,  set_symbol_to_zero( $tupj_marg_course, $tupj_marg, T ) )
+            end
+        end
+
+        ilim_0 = $L
+        # s_0 = 0
+        ind = 0
+
+        @nloops $N i p -> begin
+            0:ilim_{$N-p}
+        end p -> begin
+            s_{$N-p+1} = s_{$N-p} + i_p
+            ilim_{$N-p+1} = $L - s_{$N-p+1}
+        end begin
+
+            #Maxmimum length left over to the marg-outs
+            # max_l = $L - sum( $tupj_marg_course )
+            # l_remaining = max_l - sum( $tupj_margout_course ) 
+            l_remaining = max_l - sum( ( @ntuple $N i ) )
+
+            @nloops $N j p -> begin
+                1:rule_lengths[i_p+1]
             end begin
                 ind += 1
-           #     @nexprs $N k -> begin
-                l = $L + $No - sum( ( @ntuple $No i ) ) 
-
-                marg_ind = sg_sub2ind( Val{L}(), $tupj_marg )
-                weight_val = calc_weight( Val{L}(), l, $tupj_margout, $tupj_margout_course)
-                expr = :( out[$marg_ind] = in_interp[1,$ind] * $weight_val )
+                marg_symbol = marginal_symbol( $tupj_marg_course, $tupj_marg )
+                weight_val = calc_weight( l_remaining, $tupj_margout_course, $tupj_margout )
+                expr = :( $marg_symbol += in_interp[$ind] * $weight_val )
                 push!(exa, expr)
 
             end
+
+        end
+
+        push!(exa, :(marginal_interp = Vector{T}(undef, $marg_length)))        
+        marg_length = 0
+        #Here we fill in the marginal vector.
+        @nloops $Nin i p -> begin
+            0:ilim_{$Nin-p}
+        end p -> begin
+            s_{$Nin-p+1} = s_{$Nin-p} + i_p
+            ilim_{$Nin-p+1} = $L - s_{$Nin-p+1}
+        end begin
+            @nloops $Nin j p -> begin
+                1:rule_lengths[i_p+1]
+            end begin
+                marg_length += 1
+                marg_symbol = marginal_symbol( $tupj_marg_course, $tupj_marg )
+                push!(exa,  :($marginal_interp[$marg_length] = $marg_symbol ) )
+            end
         end
         ex
-
-
     end
 end
 
