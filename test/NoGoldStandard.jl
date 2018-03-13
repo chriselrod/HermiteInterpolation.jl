@@ -4,6 +4,22 @@
 # Distributions does not work yet on Julia 0.7
 beta_lpdf(x, alpha, beta) = (alpha-1)*log(x) + (beta-1)*log(1-x)
 
+using StaticArrays
+const TypedLength{N,T} = Union{NTuple{N,T}, StaticVector{N,T}}
+
+function generate_call(fname, n)
+    out = :( $fname( data, params[1] ) )
+    for i ∈ 2:n
+        push!(out.args, :(params[$i]))
+    end
+    out
+end
+# Expr(:meta, :inline)
+@generated function NGS(data::Tuple, params::TypedLength{N,T}) where {N,T}
+    generate_call(:NoGoldStandard, N )
+end
+
+"""Log Density of the No Gold-Standard Model"""
 function NoGoldStandard(priordata::Tuple, S₁::T, S₂::T, C₁::T, C₂::T, pi::Vararg{T,K}) where {T,K}
     n, alpha_pi, beta_pi, alpha_S1, beta_S1, alpha_S2, beta_S2,
         alpha_C1, beta_C1, alpha_C2, beta_C2 = priordata
@@ -31,22 +47,30 @@ function NoGoldStandard(priordata::Tuple, S₁::T, S₂::T, C₁::T, C₂::T, pi
     target
 end
 
-
-using LineSearches, Optim, BenchmarkTools
-rosenbrock(x) =  (1.0 - x[1])^2 + 100.0 * (x[2] - x[1]^2)^2
-initial_x = zeros(2);
-hage = BFGS();
-back = BFGS(;linesearch = LineSearches.BackTracking());
-od = TwiceDifferentiable(rosenbrock, initial_x; autodiff = :forward);
-@benchmark optimize($od, $initial_x, $hage)
-@benchmark optimize($od, $initial_x, $back)
+logit(x) = log(x/(1-x))
+invlogit(x) = 1/(1+exp(-x))
+function dinvlogit(x)
+    expnx = exp(-x)
+    expnx / abs2(1+expnx)
+end
 
 
-Optim.minimizer(ans)
-td = TwiceDifferentiable(f, initial_x; autodiff = :forward)
-Optim.minimizer(optimize(td, initial_x, Newton()))
+# using LineSearches, Optim, BenchmarkTools
+# rosenbrock(x) =  (1.0 - x[1])^2 + 100.0 * (x[2] - x[1]^2)^2
+# initial_x = zeros(2);
+# hage = BFGS();
+# back = BFGS(;linesearch = LineSearches.BackTracking());
+# od = TwiceDifferentiable(rosenbrock, initial_x; autodiff = :forward);
+# @benchmark optimize($od, $initial_x, $hage)
+# @benchmark optimize($od, $initial_x, $back)
 
-using Base.Cartesian, Random#, LinearAlgebra
+
+# Optim.minimizer(ans)
+# td = TwiceDifferentiable(f, initial_x; autodiff = :forward)
+# Optim.minimizer(optimize(td, initial_x, Newton()))
+
+using Compat
+using Base.Cartesian, Compat.Random#, LinearAlgebra
 struct Multinomial{N,T}
     n::Int
     p::NTuple{N,T}
@@ -138,3 +162,55 @@ n_big_3    = gen_data(corr_errors_independent3, 1600, 3200, 252);
 n_small_4  = gen_data(corr_errors_independent4,  100,  200,  16);
 n_medium_4 = gen_data(corr_errors_independent4,  400,  800,  64);
 n_big_4    = gen_data(corr_errors_independent4, 1600, 3200, 252);
+
+
+
+const cds2 = (n_small_4, 1,1,1,1,1,1,1,1,1,1);
+x = ntuple(i -> rand(), Val(8));
+using BenchmarkTools
+@benchmark NGS($ds2, $x)
+
+
+# julia> ForwardDiff.gradient(x -> NGS(cds2,x), svx)
+# 8-element SArray{Tuple{8},Float64,1,8}:
+#   8.671839440018804e12 
+#   9.607806107425758e13 
+#  -1.514460021428038e14 
+#  -4.5768269817453856e14
+#  -1.966459100582506e14 
+#  -4.929286840442453e13 
+#   2.1047957073464297e13
+#  -1.0733791260531581e14
+
+# julia> @benchmark ForwardDiff.gradient(x -> NGS(cds2,x), $svx)
+# BenchmarkTools.Trial: 
+#   memory estimate:  0 bytes
+#   allocs estimate:  0
+#   --------------
+#   minimum time:     945.061 ns (0.00% GC)
+#   median time:      949.848 ns (0.00% GC)
+#   mean time:        952.880 ns (0.00% GC)
+#   maximum time:     1.670 μs (0.00% GC)
+#   --------------
+#   samples:          10000
+#   evals/sample:     33
+
+# gradconf = ForwardDiff.GradientConfig(x -> NGS(cds2, x), svx)
+
+
+# #Slower?
+
+# julia> @benchmark ForwardDiff.vector_mode_gradient(x -> NGS(cds2,x), $svx, $gc)
+# BenchmarkTools.Trial: 
+#   memory estimate:  320 bytes
+#   allocs estimate:  4
+#   --------------
+#   minimum time:     1.329 μs (0.00% GC)
+#   median time:      1.434 μs (0.00% GC)
+#   mean time:        1.542 μs (8.11% GC)
+#   maximum time:     1.256 ms (99.60% GC)
+#   --------------
+#   samples:          10000
+#   evals/sample:     10
+
+

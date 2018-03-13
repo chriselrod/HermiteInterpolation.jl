@@ -32,37 +32,28 @@ end
 end
 
 @generated function SparseGrid(f, data, ::Val{N}, ::Val{L}, ::Type{T} = Float64) where {T,N,L}
-
     quote
-
         ilim_0 = $L
         s_0 = 0
         ind = 0
-
         out = Vector{$T}(grid_length(Val{$N}(), Val{$L}()))
-
         @nloops $N i p -> begin
             0:ilim_{$N-p}
         end p -> begin
             s_{$N-p+1} = s_{$N-p} + i_p
             ilim_{$N-p+1} = $L - s_{$N-p+1}
         end begin
-
             #Maxmimum length left over to the marg-outs
             # max_l = $L - sum( $tupj_marg_course )
             # l_remaining = max_l - sum( $tupj_margout_course ) 
             l_remaining = $L - sum( ( @ntuple $N i ) )
-
             @nloops $N j p -> begin
                 HermiteQuadratureRules.gk_nodes[i_p+1]
             end begin
                 ind += 1
                 out[ind] = f(data, (@ntuple $N j)...)
             end
-
-
         end
-
     end
 end
 
@@ -87,8 +78,6 @@ end
         drop = @ntuple $Nd i -> drop_i
 
         out = Matrix{T}($Nn, polycount(Val{Nn}(), L))
-
-
     end
 end
 @generated function SparseGrid(sg::SparseGrid{T,No,L}, retain::NTuple{Nn,I}) where {T,No,L,Nn,I<:Integer}
@@ -102,10 +91,7 @@ end
             drop_i = i + increment
         end
         drop = @ntuple $Nd i -> drop_i
-
         out = Matrix{T}($Nn, polycount(Val{Nn}(), L))
-
-
     end
 end
 
@@ -131,7 +117,6 @@ sparse_grid_mat(::Type{T}, ::Val{N}, l::Int) where {T,N} = sparse_grid_mat!(Matr
                 @nexprs $N k -> begin
                     out[k,ind] = j_k
                 end
-
             end
         end
         out
