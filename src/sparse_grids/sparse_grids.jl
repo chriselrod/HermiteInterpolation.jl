@@ -8,6 +8,63 @@ Base.@pure Marginal(marg...) = Marginal{marg}()
 struct SparseGrid{T,N,L,A} <: AbstractArray{T,N}
     nodes::A
 end
+@generated grid_length(::Val{N}, ::Val{L}) where {N,L} = _grid_length(Val{N}(), L)
+@generated function _grid_length(::Val{N}, L::Int) where {N}
+    quote
+        ilim_0 = L
+        s_0 = 0
+        ind = 0
+        out = 0
+        @nloops $N i p -> begin
+            0:ilim_{$N-p}
+        end p -> begin
+            s_{$N-p+1} = s_{$N-p} + i_p
+            ilim_{$N-p+1} = L - s_{$N-p+1}
+        end begin
+            @nloops $N j p -> begin
+                1:rule_lengths[i_p+1]
+            end begin
+                out += 1
+            end
+        end
+        out
+    end
+end
+
+@generated function SparseGrid(f, data, ::Val{N}, ::Val{L}, ::Type{T} = Float64) where {T,N,L}
+
+    quote
+
+        ilim_0 = $L
+        s_0 = 0
+        ind = 0
+
+        out = Vector{$T}(grid_length(Val{$N}(), Val{$L}()))
+
+        @nloops $N i p -> begin
+            0:ilim_{$N-p}
+        end p -> begin
+            s_{$N-p+1} = s_{$N-p} + i_p
+            ilim_{$N-p+1} = $L - s_{$N-p+1}
+        end begin
+
+            #Maxmimum length left over to the marg-outs
+            # max_l = $L - sum( $tupj_marg_course )
+            # l_remaining = max_l - sum( $tupj_margout_course ) 
+            l_remaining = $L - sum( ( @ntuple $N i ) )
+
+            @nloops $N j p -> begin
+                HermiteQuadratureRules.gk_nodes[i_p+1]
+            end begin
+                ind += 1
+                out[ind] = f(data, (@ntuple $N j)...)
+            end
+
+
+        end
+
+    end
+end
 
 @generated function SparseGrid(::Type{T}, ::Val{N}, ::Val{L}) where {T <: Real, N, L}
     SparseGrid{T,N,L}(sparse_grid_mat(T, Val{N}(), L))
@@ -52,7 +109,7 @@ end
     end
 end
 
-sparse_grid_mat(::Type{T}, ::Val{N}, l::Int) where {T,N} = sparse_grid_mat!(Matrix{T}($N, polycount(Val{N}(), l)), Val{N}(), l)
+sparse_grid_mat(::Type{T}, ::Val{N}, l::Int) where {T,N} = sparse_grid_mat!(Matrix{T}(N, polycount(Val{N}(), l)), Val{N}(), l)
 
 @generated function sparse_grid_mat!(out::Matrix{T}, ::Val{N}, l::Int) where {T,N}
     quote
@@ -103,10 +160,9 @@ end
 
 function set_symbol_to_zero(course_inds::NTuple{N}, fine_inds::NTuple{N}, ::Type{T} = Float64, symbolstring = "m") where {N,T}
     symbol = marginal_symbol(course_inds, fine_inds, symbolstring)
-    zero = zero(T)
-    :($symbol = $zero)
+    z = zero(T)
+    :($symbol = $z)
 end
-
 
 
 ## Need to replace Marginal{marg} and Marginalize{margout} with marg::NTuple and margout::NTuple
@@ -121,7 +177,7 @@ end
     tupj_marg_course = Expr(:tuple, symbolify(marg, :i_)... ) #This tuple gives the course indices we keep.
     tupj_margout_course = Expr(:tuple, symbolify(margout, :i_)...) #This tuple gives the course indices we're marginalizing out.
     quote
-        ex = quote @fastmath begin end end
+        ex = quote @fastmath begin in_interp = sg.nodes end end
         exa = ex.args[2].args[3].args# 0.7
         # exa = ex.args[2].args[2].args# 0.6
 
@@ -140,7 +196,7 @@ end
                 1:rule_lengths[i_p+1]
             end begin
                 marg_length += 1
-                push!(exa,  set_symbol_to_zero( $tupj_marg_course, $tupj_marg, T ) )
+                push!(exa,  set_symbol_to_zero( ( @ntuple $Nin i ) , ( @ntuple $Nin j ), T ) )
             end
         end
 
@@ -158,20 +214,20 @@ end
             #Maxmimum length left over to the marg-outs
             # max_l = $L - sum( $tupj_marg_course )
             # l_remaining = max_l - sum( $tupj_margout_course ) 
-            l_remaining = max_l - sum( ( @ntuple $N i ) )
+            l_remaining = $L - sum( ( @ntuple $N i ) )
 
             @nloops $N j p -> begin
                 1:rule_lengths[i_p+1]
             end begin
                 ind += 1
                 marg_symbol = marginal_symbol( $tupj_marg_course, $tupj_marg )
-                weight_val = calc_weight( l_remaining, $tupj_margout_course, $tupj_margout )
+                weight_val = calc_weights( l_remaining, $tupj_margout_course, $tupj_margout )
                 expr = :( $marg_symbol += in_interp[$ind] * $weight_val )
                 push!(exa, expr)
             end
         end
 
-        push!(exa, :(marginal_interp = Vector{T}(undef, $marg_length)))        
+        push!(exa, :(marginal_interp = Vector{$T}(undef, $marg_length)))        
         marg_length = 0
         #Here we fill in the marginal vector.
         @nloops $Nin i p -> begin
@@ -184,10 +240,13 @@ end
                 1:rule_lengths[i_p+1]
             end begin
                 marg_length += 1
-                marg_symbol = marginal_symbol( $tupj_marg_course, $tupj_marg )
-                push!(exa,  :($marginal_interp[$marg_length] = $marg_symbol ) )
+                marg_symbol = marginal_symbol( ( @ntuple $Nin i ), ( @ntuple $Nin j ) )
+                push!(exa,  :(marginal_interp[$marg_length] = $marg_symbol ) )
             end
         end
+        Nin = $Nin
+        output = :(SparseGrid{$T,$Nin,$L,Vector{$T}}(marginal_interp))
+        push!(exa, output )
         ex
     end
 end
@@ -307,8 +366,8 @@ function Base.done(sg::SparseGrid{T,N}, state) where {T,N}
 
 end
 Base.IteratorSize(sg::SparseGrid) = HaseLength()
-Base.IteratorEltype(sg::SparseGrid{T,N}) = HasEltype()
-Base.eltype(sg::SparseGrid{T,N}) = Tuple{Tuple{NTuple{N,T},T},SparseGrid{T,N}}
+Base.IteratorEltype(sg::SparseGrid) = HasEltype()
+Base.eltype(sg::SparseGrid{T,N}) where {T,N} = Tuple{Tuple{NTuple{N,T},T},SparseGrid{T,N}}
 
 @generated function Base.size(sg::SparseGrid{T,N,L}) where {T,N,L}
     ntuple( length(hermite_nodes) , Val{L}())

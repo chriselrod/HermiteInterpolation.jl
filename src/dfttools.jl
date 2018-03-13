@@ -121,7 +121,7 @@ function recursion_meta(n)
     d_array, recursion_levels
 end
 
-@generated function dfte(x::Ntuple{n,T}) where {n,T}
+@generated function dfte(x::NTuple{n,T}) where {n,T}
 
     quote
         @nextract $n x x
