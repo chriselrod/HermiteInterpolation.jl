@@ -77,7 +77,7 @@ end
         #     p_{i+4} = invlogit(params[i+4])
         # end
         $call
-        -target
+        target
     end
 end
 
@@ -232,22 +232,6 @@ const cds4 = (n_small_4,1,1,1,1,1,1,1,1,1,1);
 const cdb4 = (n_big_4,1,1,1,1,1,1,1,1,1,1);
 using Optim, LineSearches
 
-initial_x = zeros(8);
-NGS(cds2, initial_x, Val{8}())
-hage = BFGS()
-back = BFGS(; linesearch = LineSearches.BackTracking())
-ntr = NewtonTrustRegion()
-optimize(x -> NGS(cdb4, x, Val{8}()), initial_x, hage)
-optimize(x -> NGS(cdb4, x, Val{8}()), initial_x, back)
-optimize(x -> NGS(cdb4, x, Val{8}()), initial_x, ntr)
-
-using BenchmarkTools
-@benchmark optimize(x -> NGS(cdb4, x, Val{8}()), $initial_x, $hage)
-@benchmark optimize(x -> NGS(cdb4, x, Val{8}()), $initial_x, $back)
-@benchmark optimize(x -> NGS(cdb4, x, Val{8}()), $initial_x, $ntr)
-
-#Backtrack fastest, in part because it doesn't need nearly as many gradient calls.
-
 
 detransform_res(x::Optim.MultivariateOptimizationResults) = detransform_res(Optim.minimizer(x))
 function detransform_res(x)
@@ -260,6 +244,59 @@ function detransform_res(x)
     end
     out
 end
+
+
+initial_x = zeros(8);
+NGS(cds2, initial_x, Val{8}())
+hage = BFGS()
+back = BFGS(; linesearch = LineSearches.BackTracking())
+ntr = NewtonTrustRegion()
+hagemin = optimize(x -> -NGS(cdb4, x, Val{8}()), initial_x, hage)
+detransform_res(hagemin)
+
+backmin = optimize(x -> -NGS(cdb4, x, Val{8}()), initial_x, back)
+detransform_res(backmin)
+
+ntrmin = optimize(x -> -NGS(cdb4, x, Val{8}()), initial_x, ntr)
+detransform_res(ntrmin)
+
+using BenchmarkTools
+@benchmark optimize(x -> -NGS(cdb4, x, Val{8}()), $initial_x, $hage)
+@benchmark optimize(x -> -NGS(cdb4, x, Val{8}()), $initial_x, $back)
+@benchmark optimize(x -> -NGS(cdb4, x, Val{8}()), $initial_x, $ntr)
+#Backtrack fastest, in part because it doesn't need nearly as many gradient calls.
+
+
+
+# Use this to get the second derivatives, for now
+# Calculates redundant values
+max_density = Optim.minimizer(ntrmin);
+hess = ForwardDiff.hessian(x -> -NGS(cdb4, x, Val{8}()), max_density)
+scale_factors = diag(hess)
+
+# Now we can use these scale factors to center and scale on the grid.
+# Ideally, we would get an efficient way of calculating the Hessian and minimum.
+# But for now, let us just move on and test the grid's performance.
+
+# Also, pattern for the marginal distributions?
+
+using HermiteInterpolation
+#Compare three different versions
+# @nloops, no explicit array
+# matrix
+# vector of tuples.
+# A priori hypothesis: Winner is probably #1 or #2
+sg = SparseGrid(NGS, cdb4, Val{8}(), Val{4}())
+
+#Marginalize via a basic raditz split.
+#I'll hard code it for the simulation, because that's easier.
+
+
+
+
+
+
+
 
 
 function print_mat_for_copy(m)
