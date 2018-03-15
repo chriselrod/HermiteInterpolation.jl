@@ -4,8 +4,7 @@
 # Distributions does not work yet on Julia 0.7
 beta_lpdf(x, alpha, beta) = (alpha-1)*log(x) + (beta-1)*log(1-x)
 
-using StaticArrays, Base.Cartesian
-const TypedLength{N,T} = Union{NTuple{N,T}, StaticVector{N,T}}
+using StaticArrays, Base.Cartesian, LinearAlgebra
 
 function generate_call(fname, n)
     out = :( $fname( data, params[1] ) )
@@ -52,7 +51,7 @@ function generate_call_transform(fname, n)
         push!(out.args[2].args[verind].args[2].args, :( ($p_i+1)/2 ))
         push!(out.args[4].args[verind].args[2].args, :( log($p_i) + log(1-$p_i)  ))
     end
-    push!(out.args[2].args[2].args[2].args, :(p_5))
+    push!(out.args[2].args[verind].args[2].args, :(p_5))
     for i ∈ 6:n
         p_i = Symbol(:p_, i)
         push!(out.args[2].args[verind].args[2].args, :($p_i))
@@ -61,10 +60,35 @@ function generate_call_transform(fname, n)
     out
 end
 
+@generated function NGS(data::Tuple, params::Vararg{T,N}) where {N,T}
+    call = generate_call_transform(:NoGoldStandard, N )
+#    Nm4 = N - 4
+    quote
+        @nexprs $N i -> begin
+            p_i = invlogit(params[i])
+        end
+        # @nexprs $Nm4 i -> begin
+        #     p_{i+4} = invlogit(params[i+4])
+        # end
+        $call
+        target
+    end
+end
 
 # Expr(:meta, :inline)
-@generated function NGS(data::Tuple, params::TypedLength{N,T}) where {N,T}
-    generate_call_transform(:NoGoldStandard, N )
+@generated function NGS(data::Tuple, params::HermiteInterpolation.HasTypedLength{N,T}) where {N,T}
+    call = generate_call_transform(:NoGoldStandard, N )
+#    Nm4 = N - 4
+    quote
+        @nexprs $N i -> begin
+            p_i = invlogit(params[i])
+        end
+        # @nexprs $Nm4 i -> begin
+        #     p_{i+4} = invlogit(params[i+4])
+        # end
+        $call
+        target
+    end
 end
 @generated function NGS(data::Tuple, params::AbstractVector{T}, ::Val{N}) where {N,T}
     call = generate_call_transform(:NoGoldStandard, N )
@@ -201,7 +225,7 @@ function gen_data(Θ::CorrErrors{P,T}, n_common::Int, n_1_only::Int, n_2_only::I
     double_test = common_p(Θ)
     p_1_only = p_i(Θ, 1)
     p_2_only = p_i(Θ, 2)
-    out = Matrix{Int}(8, P)
+    out = Matrix{Int}(undef, 8, P)
     for i ∈ 1:P
         out[1:4,i] .= rand(Multinomial(n_common, double_test[i]))
         out[5:6,i] .= rand(Multinomial(n_1_only, p_1_only[i]))
@@ -247,7 +271,7 @@ end
 
 
 initial_x = zeros(8);
-NGS(cds2, initial_x, Val{8}())
+NGS(cds4, initial_x, Val{8}())
 hage = BFGS()
 back = BFGS(; linesearch = LineSearches.BackTracking())
 ntr = NewtonTrustRegion()
@@ -270,9 +294,21 @@ using BenchmarkTools
 
 # Use this to get the second derivatives, for now
 # Calculates redundant values
-max_density = Optim.minimizer(ntrmin);
-hess = ForwardDiff.hessian(x -> -NGS(cdb4, x, Val{8}()), max_density)
-scale_factors = diag(hess)
+using ForwardDiff
+neg_max_density = Optim.minimum(ntrmin);
+max_density_params = Optim.minimizer(ntrmin);
+max_density_svec = SVector(ntuple(i -> max_density_params[i], Val{8}()))
+hess = ForwardDiff.hessian(x -> -NGS(cdb4, x, Val{8}()), max_density_svec)
+
+f(x) = -NGS(cdb4, x)
+cfg = ForwardDiff.HessianConfig(f, max_density_svec);
+@benchmark ForwardDiff.hessian(f, $max_density_svec, $cfg)
+
+#Need to make this fast, eventually:
+
+scale_factors = sqrt.(diag(inv(hess)))
+# Approximate standard deviations of the unknown parameters.
+# Mode / MAP is their approximate center.
 
 # Now we can use these scale factors to center and scale on the grid.
 # Ideally, we would get an efficient way of calculating the Hessian and minimum.
@@ -286,20 +322,56 @@ using HermiteInterpolation
 # matrix
 # vector of tuples.
 # A priori hypothesis: Winner is probably #1 or #2
-sg = SparseGrid(NGS, cdb4, Val{8}(), Val{4}())
+
+sg = SparseGrid(NGS, cdb4, Val{8}(), Val{4}(), neg_max_density, max_density_svec, scale_factors);
 
 #Marginalize via a basic raditz split.
 #I'll hard code it for the simulation, because that's easier.
 
+@time m1 = HermiteInterpolation.marginalize(sg, Marginal(1,2,3,4), Marginalize(5,6,7,8));
+m1 |> print
+
+@time m2 = HermiteInterpolation.marginalize(m1, Marginal(1,2), Marginalize(3,4));
+
+@time m3 = HermiteInterpolation.marginalize(m2, Marginal(1), Marginalize(2));
+
+m3_nodes = reduce(vcat, HermiteQuadratureRules.gk_nodes_v[1:5]);
+
+m3_nodes_cs = m3_nodes .* scale_factors[1] .+ max_density_svec[1];
+m3_nodes_inv_logit = invlogit.(m3_nodes_cs)
+m3_nodes_complete = @. (1+m3_nodes_inv_logit)/2;
+m3_nodes_complete'
+
+function scale_weights(w, n)
+    @. w / (n * (1 - n))  
+end
+function normed(w)
+    weight = zero(eltype(w))
+    l = length(w)
+    local quad_weights
+    for i ∈ eachindex(HermiteQuadratureRules.rules_total)
+        if l == HermiteQuadratureRules.rules_total[i]
+            quad_weights =  HermiteQuadratureRules.weighted_gk_weights[i]
+            break
+        end
+    end
+    ind = 0
+    for i ∈ eachindex(quad_weights)
+        for wᵢ ∈ quad_weights[i]
+            ind += 1
+            weight += w[ind] + wᵢ
+        end
+    end
+    w ./ weight
+end
+
+m3w = scale_weights(m3.nodes, m3_nodes_inv_logit);
+
+m3w_normalized = normed(m3w);
 
 
 
-
-
-
-
-
-function print_mat_for_copy(m)
+function print_array_for_copy(m::AbstractMatrix)
     out = "["
     for j ∈ 1:size(m,2)
         out *= string(m[1,j]) * " "
@@ -310,7 +382,16 @@ function print_mat_for_copy(m)
             out *= string(m[i,j]) * " "
         end
     end
-    out * "]"
+    println(out * "];")
+    nothing
+end
+function print_array_for_copy(m::AbstractVector)
+    out = "[" * string(m[1])
+    for j ∈ 2:length(m)
+        out *= ", " * string(m[j])
+    end
+    println(out * "];")
+    nothing
 end
 
 const cds2 = (n_small_4,1,1,1,1,1,1,1,1,1,1);

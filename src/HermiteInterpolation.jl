@@ -8,7 +8,8 @@ using   #Reduce,
    #     Sobol,
    #     GPUArrays,
         Compat,
-        HermiteQuadratureRules
+        HermiteQuadratureRules,
+        StaticArrays
 
 # import HermiteQuadratureRules:
 #         hermite_nodes,

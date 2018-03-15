@@ -5,8 +5,8 @@ Base.@pure Marginalize(marg...) = Marginalize{marg}()
 struct Marginal{T} end
 Base.@pure Marginal(marg...) = Marginal{marg}()
 
-struct SparseGrid{T,N,L,A} <: AbstractArray{T,N}
-    nodes::A
+struct SparseGrid{T,N,L} <: AbstractArray{T,N}
+    nodes::Vector{T}
 end
 @generated grid_length(::Val{N}, ::Val{L}) where {N,L} = _grid_length(Val{N}(), L)
 @generated function _grid_length(::Val{N}, L::Int) where {N}
@@ -54,6 +54,40 @@ end
                 out[ind] = f(data, (@ntuple $N j)...)
             end
         end
+        SparseGrid{$T,$N,$L}(out)
+    end
+end
+
+const HasTypedLength{N,T} = Union{NTuple{N,T}, SVector{N,T}}
+function grid_adjust(node::HasTypedLength{N,T}, center::HasTypedLength{N,T}, scale::HasTypedLength{N,T}) where {N,T}
+    @. node * scale + center
+end
+
+@generated function SparseGrid(f, data, ::Val{N}, ::Val{L}, neg_max::T, center::HasTypedLength{N,T}, scale::HasTypedLength{N,T}) where {T,N,L}
+    quote
+        ilim_0 = $L
+        s_0 = 0
+        ind = 0
+        out = Vector{$T}(undef,grid_length(Val{$N}(), Val{$L}()))
+        @nloops $N i p -> begin
+            0:ilim_{$N-p}
+        end p -> begin
+            s_{$N-p+1} = s_{$N-p} + i_p
+            ilim_{$N-p+1} = $L - s_{$N-p+1}
+        end begin
+            #Maxmimum length left over to the marg-outs
+            # max_l = $L - sum( $tupj_marg_course )
+            # l_remaining = max_l - sum( $tupj_margout_course ) 
+            l_remaining = $L - sum( ( @ntuple $N i ) )
+            @nloops $N j p -> begin
+                HermiteQuadratureRules.gk_nodes_v[i_p+1]
+            end begin
+                ind += 1
+                out[ind] = exp(neg_max + f(data, grid_adjust(SVector(@ntuple $N j), center, scale) ))
+            end
+        end
+
+        SparseGrid{$T,$N,$L}(out)
     end
 end
 
@@ -130,10 +164,47 @@ function symbolify(x::NTuple{N,T}, sym::Symbol = :j_) where {N,T}
     ntuple( p -> Symbol(sym, x[p]) , Val{N}())
 end
 
+@generated function missing_inds(x::NTuple{N,T}, ::Val{Ntotal}) where {N,Ntotal,T <: Integer}
+    Ndiff = Ntotal - N
+    quote
+        nfound = 0
+        @nexprs $Ndiff i -> begin
+            local ind_i
+        end
+        # for i ∈ 1:Ntotal
+        i = 0
+        while nfound < $Ndiff
+            i += 1
+            if i ∉ x
+                nfound += 1
+                @nif $Ndiff j -> j == nfound j -> ind_j = i
+                # if nfound == $Ndiff
+                #     break
+                # end
+            end
+        end
+       @ntuple $Ndiff ind
+    end
+end
+@generated function MargDiff(::Marginal{marg}, ::Val{N}) where {marg,N}
+    Marginalize{missing_inds(marg, Val{N}())}()
+end
+@generated function MargDiff(::Marginalize{margout}, ::Val{N}) where {margout,N}
+    Marginal{missing_inds(margout, Val{N}())}()
+end
+
+@generated function marginalize(sg::SparseGrid{T,No,L}, ::Marginal{marg}) where {T,No,L, marg}
+    _marginalize(sg, Marginal{marg}(), MargDiff( Marginal{marg}(), Val{No}() ) )
+end
+@generated function marginalize(sg::SparseGrid{T,No,L}, ::Marginalize{margout}) where {T,No,L, margout}
+    _marginalize(sg, MargDiff( Marginalize{margout}(), Val{No}() ), Marginalize{margout}())
+end
+
 #@generated function _marginalize(sg::SparseGrid{T,No,L}, marg::NTuple{Nin}, margout::NTuple{Nout}) where {T,No,L, Nin, Nout}
 #end
 @generated function marginalize(sg::SparseGrid{T,No,L}, ::Marginal{marg}, ::Marginalize{margout}) where {T,No,L, marg, margout}
-    _marginalize(sg::SparseGrid{T,No,L}, marg, margout)
+#    @assert length(marg) + length(margout) == No
+    _marginalize(sg, Marginal{marg}(), Marginalize{margout}())
 end
 
 function marginal_symbol(course_inds::NTuple{N}, fine_inds::NTuple{N}, symbolstring = "m") where N
@@ -153,7 +224,7 @@ end
 ## Need to replace Marginal{marg} and Marginalize{margout} with marg::NTuple and margout::NTuple
 ## add out and in_interp
 # @generated function _marginalize(sg::SparseGrid{T,N,L}, marg::NTuple{Nin,Int}, margout::NTuple{Nout}) where {T,N,L,Nin,Nout}
-@generated function _marginalize(sg::SparseGrid{T,N,L}, ::Marginal{marg}, ::Marginalize{margout}) where {T,N,L,marg,margout}
+@generated function _marginalize(::Type{SparseGrid{T,N,L}}, ::Marginal{marg}, ::Marginalize{margout}) where {T,N,L,marg,margout}
     Nin = length(marg)
     Nout = length(margout)
     # calc_l = :(sum($tupj_margout_course) - $(length(margout)))
@@ -230,7 +301,7 @@ end
             end
         end
         Nin = $Nin
-        output = :(SparseGrid{$T,$Nin,$L,Vector{$T}}(marginal_interp))
+        output = :(SparseGrid{$T,$Nin,$L}(marginal_interp))
         push!(exa, output )
         ex
     end
@@ -355,12 +426,20 @@ Base.IteratorEltype(sg::SparseGrid) = HasEltype()
 Base.eltype(sg::SparseGrid{T,N}) where {T,N} = Tuple{Tuple{NTuple{N,T},T},SparseGrid{T,N}}
 
 @generated function Base.size(sg::SparseGrid{T,N,L}) where {T,N,L}
-    ntuple( length(hermite_nodes) , Val{L}())
+    ntuple( i -> HermiteQuadratureRules.rules_total[L+1] , Val{N}())
 end
-@generated function Base.length(sg::SparseGrid{T,N,L}) where {T,N,L}
-    polycount(Val{N}(), L)
-end
+# @generated function Base.length(sg::SparseGrid{T,N,L}) where {T,N,L}
+#     polycount(Val{N}(), L)
+# end
 
+Base.length(sg::SparseGrid) = length(sg.nodes)
+
+function Base.show(io::IO, sg::SparseGrid)
+    println(io, "Sparse grid of size:", size(sg))
+    FillDensity = length(sg.nodes) / prod(size(sg))
+    println("The fill density: ", FillDensity)
+    nothing
+end
 
 @inline function Base.getindex(sg::SparseGrid{T,N}, i::Int) where {T,N}
     ntuple( j -> sg.nodes[j,i], Val{N}())
