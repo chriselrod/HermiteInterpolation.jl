@@ -12,12 +12,12 @@ end
 @generated function gen_polies(x::NTuple{N,T}, ::Val{k}, c::T2 = one(Float32)) where {N,T,T2,k}
     N_level = binomial(N+k-1,N-1)
     quote
-        buffer = Vector{T}(uninitialized, $N)
+        buffer = Vector{T}(undef, $N)
         for i ∈ 1:$N
             buffer[i] = x[i]
         end
         N_0 = $N
-        out = Vector{Tuple{T2,NTuple{$N,T}}}(uninitialized, $N_level)
+        out = Vector{Tuple{T2,NTuple{$N,T}}}(undef, $N_level)
         itert = 0
         @nloops $k i l -> begin
             1:N_{$k-l}
@@ -90,7 +90,7 @@ function linear_map_stable( seq::Vector{NTuple{N,T}}, poly::Vector{NTuple{N,I}} 
     n = length(poly)
     np = length(seq)
     Np1 = N+1
-    X = Matrix{T}(uninitialized, np*Np1, n)
+    X = Matrix{T}(undef, np*Np1, n)
     Xm = fill(zero(T), np*Np1, n)
     for i ∈ 1:np
         polies = gen_polies(poly[i], Val{1}(), one(T))
@@ -126,7 +126,7 @@ function linear_map_stable_understandable( seq::Vector{NTuple{N,T}}, poly::Vecto
     n = length(poly)
     np = length(seq)
     Np1 = N+1
-    X = Matrix{T}(uninitialized, np*Np1, n)
+    X = Matrix{T}(undef, np*Np1, n)
     Xm = fill(zero(T), np*Np1, n)
     for i ∈ 1:np
         polies = gen_polies(poly[i], Val{1}(), T(3)^( -prod(poly[i]) ) )
