@@ -1,4 +1,4 @@
-
+#Requires latest Sobol master.
 
 function sobol_seq(::Val{N}) where N
     isa(N, Integer) || error("$N is not an integer.")
@@ -30,12 +30,12 @@ function sobol_seq(::Val{N}) where N
     SobolSeq{N}(m,zeros(UInt32,N),zeros(UInt32,N),zero(UInt32))
 end
 
-function sobol_vec(::Val{N}, npoints::Int = 64, T = Float32) where N
+function sobol_vec(::Val{N}, npoints::Int = 64, ::Type{T} = Float64) where {N,T}
     s = sobol_seq(Val{N}())
-    x = Vector{T}(N)
+    x = Vector{T}(undef, N)
     Sobol.skip!(s, npoints, x)
 
-    out = Vector{NTuple{N,T}}(npoints)
+    out = Vector{NTuple{N,T}}(undef, npoints)
 
     for i ∈ 1:npoints
         if s.n == typemax(s.n)
@@ -63,6 +63,21 @@ function gen_sobol_x!(i, c, sb, sx, sm)
     end
     #logit(x)
     √2 * erfinv(2x-1)
+end
+
+
+function sobol_vec_reinterp_ver(::Val{N}, npoints::Int = 64, ::Type{T} = Float64) where {N,T}
+    s = sobol_seq(Val{N}())
+    x = Vector{T}(undef, N)
+    Sobol.skip!(s, npoints, x)
+
+    out = Vector{NTuple{N,T}}(undef, npoints)
+    out2 = reshape(reinterpret(T, out),N,npoints)
+
+    for i ∈ 1:npoints
+        next!(s, @view(out2[:,i]))
+    end
+    out
 end
 
 logit(x) = log(x / (1-x))

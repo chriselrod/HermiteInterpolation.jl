@@ -26,8 +26,8 @@ export Marginal,
 # include("sobol.jl")
 # include("dfttools.jl")
 include("sparse_grids/sparse_grids.jl")
-# include("polynomial/polynomials.jl")
-# include("polynomial/solution_matrix.jl")
+include("polynomial/polynomials.jl")
+include("polynomial/solution_matrix.jl")
 # include("high_degree_polynomial/polynomials.jl")
 
 # export  sobol_vec,

@@ -554,13 +554,13 @@ function poly_basis_gen(::Val{15})
     p, coef(p)
 end
 poly_basis_gen(::Val{N}) where N = throw("Size $N not yet implemented.") 
-@generated function pcvec2(::Val{N}, seq, total_size = (N+1)*64, I = Cuint) where N
+@generated function pcvec2(::Val{N}, seq, total_size = (N+1)*64, ::Type{I} = Int) where {N,I<:Integer}
     quote
         l = length(seq) - 1
         j_0 = l
         l_0 = 1
         s_0 = 0
-        out = Vector{NTuple{$N,I}}(0)
+        out = Vector{NTuple{$N,I}}(undef, 0)
         sizehint!(out, total_size)
         @nloops $N i p -> begin
             l_{$N-p}:j_{$N-p}
@@ -588,7 +588,7 @@ end
         j_0 = l
         l_0 = 1
         s_0 = 0
-        out = Vector{NTuple{$N,Cuint}}(0)
+        out = Vector{NTuple{$N,T}}(undef, 0)
         sizehint!(out, total_size)
         @nloops $N i p -> begin
             l_{$N-p}:j_{$N-p}
@@ -604,7 +604,7 @@ end
                     1+seq[p][i_p]:seq[p][i_p+1]
                 end
             end begin
-                push!(out, (@ntuple $N k -> Cuint(k)) )
+                push!(out, (@ntuple $N k -> T(k)) )
             end
         end
         out
@@ -621,7 +621,7 @@ end
         j_0 = l
         l_0 = 1
         s_0 = 0
-        out = Vector{NTuple{$N,Int}}(0)
+        out = Vector{NTuple{$N,Int}}(undef, 0)
         @nloops $N i p -> begin
             l_{$N-p}:j_{$N-p}
         end p -> begin
